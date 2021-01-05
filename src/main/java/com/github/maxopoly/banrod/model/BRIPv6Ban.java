@@ -2,7 +2,6 @@ package com.github.maxopoly.banrod.model;
 
 import java.time.Instant;
 
-import inet.ipaddr.ipv4.IPv4Address;
 import inet.ipaddr.ipv6.IPv6Address;
 
 public class BRIPv6Ban extends BRIPBan<IPv6Address> {

@@ -15,7 +15,6 @@ public abstract class BRBan {
 	private BanEffect effect;
 
 	protected BRBan(int bid, Instant startingTime, Instant endTime, String comment, String source, BanEffect effect) {
-		super();
 		this.bid = bid;
 		this.startingTime = startingTime;
 		this.endTime = endTime;
@@ -64,6 +63,10 @@ public abstract class BRBan {
 	
 	public BanEffect getEffect() {
 		return effect;
+	}
+	
+	public String toString() {
+		return String.format("Start: %s, End: %s, Effect: %s, Comment: %s, Source: %s", startingTime, endTime, effect, comment, source);
 	}
 
 }

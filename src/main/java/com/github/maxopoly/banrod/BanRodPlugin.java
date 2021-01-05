@@ -1,6 +1,10 @@
 package com.github.maxopoly.banrod;
 
-import com.github.maxopoly.banrod.listener.IPBanManager;
+import com.github.maxopoly.banrod.listener.ZeusEventListener;
+import com.github.maxopoly.banrod.manager.AccountBanManager;
+import com.github.maxopoly.banrod.manager.ActiveSessionTracker;
+import com.github.maxopoly.banrod.manager.BanRodDAO;
+import com.github.maxopoly.banrod.manager.IPBanManager;
 import com.github.maxopoly.zeus.plugin.ZeusLoad;
 import com.github.maxopoly.zeus.plugin.ZeusPlugin;
 
@@ -15,17 +19,35 @@ public class BanRodPlugin extends ZeusPlugin {
 	
 	private BanRodDAO dao;
 	private IPBanManager ipBanManager;
+	private AccountBanManager accBanManager;
+	private ActiveSessionTracker sessionTracker;
+	private BanRodConfig config;
 
 	@Override
 	public boolean onEnable() {
 		instance = this;
+		this.config = new BanRodConfig(getConfig());
 		this.dao = new BanRodDAO(logger);
-		this.ipBanManager = new IPBanManager();
+		if (!dao.updateDatabase()) {
+			return false;
+		}
+		this.accBanManager = new AccountBanManager(dao);
+		this.ipBanManager = new IPBanManager(dao);
+		this.sessionTracker = new ActiveSessionTracker(logger, dao);
+		registerPluginlistener(new ZeusEventListener(accBanManager, ipBanManager, dao, config, sessionTracker, logger));
 		return true;
 	}
 	
 	public BanRodDAO getDAO() {
 		return dao;
+	}
+	
+	public BanRodConfig getBanRodConfig() {
+		return config;
+	}
+	
+	public AccountBanManager getAccountBanManager() {
+		return accBanManager;
 	}
 	
 	public IPBanManager getIPBanManager() {
@@ -34,7 +56,6 @@ public class BanRodPlugin extends ZeusPlugin {
 
 	@Override
 	public void onDisable() {
-		// TODO Auto-generated method stub
 		
 	}
 

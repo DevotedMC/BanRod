@@ -1,4 +1,4 @@
-package com.github.maxopoly.banrod;
+package com.github.maxopoly.banrod.manager;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -25,9 +25,13 @@ import com.github.maxopoly.banrod.model.BRIPv6Ban;
 import com.github.maxopoly.banrod.model.BRMetaBan;
 import com.github.maxopoly.banrod.model.BRMetaBanType;
 import com.github.maxopoly.banrod.model.BRPlayerBan;
+import com.github.maxopoly.banrod.model.BRSession;
+import com.github.maxopoly.banrod.model.BRShare;
+import com.github.maxopoly.banrod.model.BanEffect;
 import com.github.maxopoly.zeus.plugin.ZeusPluginDatabase;
 
 import inet.ipaddr.IPAddress;
+import inet.ipaddr.IPAddressString;
 import inet.ipaddr.ipv4.IPv4Address;
 import inet.ipaddr.ipv6.IPv6Address;
 
@@ -46,7 +50,7 @@ public class BanRodDAO extends ZeusPluginDatabase {
 						+ " region VARCHAR(255)," + " city VARCHAR(255)," + " postal VARCHAR(255),"
 						+ " lat DOUBLE PRECISION DEFAULT NULL," + " lon DOUBLE PRECISION DEFAULT NULL,"
 						+ " domain TEXT," + " provider TEXT," + " registered_as TEXT," + " connection TEXT,"
-						+ " proxy FLOAT," + " source TEXT," + " comment TEXT," + ");",
+						+ " proxy FLOAT," + " source TEXT," + " comment TEXT" + ");",
 
 				"CREATE INDEX br_ip_data_country on br_ip_data (country)",
 				"CREATE INDEX br_ip_data_region on br_ip_data (region)",
@@ -62,24 +66,36 @@ public class BanRodDAO extends ZeusPluginDatabase {
 
 				"CREATE TABLE IF NOT EXISTS br_sessions (sid SERIAL PRIMARY KEY NOT NULL,"
 						+ " player uuid NOT NULL, join_time TIMESTAMP NOT NULL DEFAULT NOW(),"
-						+ " leave_time TIMESTAMP NOT NULL, ip INET NOT NULL, forgiven BOOLEAN NOT NULL DEFAULT FALSE);",
+						+ " leave_time TIMESTAMP, ip INET NOT NULL, forgiven BOOLEAN NOT NULL DEFAULT FALSE);",
 
 				"CREATE INDEX br_session_player on br_sessions (player, join_time)",
 				"CREATE INDEX br_session_ip on br_sessions (ip, player)",
 
 				"CREATE TABLE IF NOT EXISTS br_shares (shid SERIAL PRIMARY KEY NOT NULL, first_sid SERIAL NOT NULL,"
-						+ "second_sid SERIAL NOT NULL, forgiven BOOLEAN NOT NULL DEFAULT FALSE"
+						+ "second_sid SERIAL NOT NULL, forgiven BOOLEAN NOT NULL DEFAULT FALSE, "
 						+ "constraint br_shares_fk_sid1 foreign key (first_sid) references br_sessions (sid) ON DELETE CASCADE,"
 						+ "constraint br_shares_fk_sid2 foreign key (second_sid) references br_sessions (sid) ON DELETE CASCADE);",
 
-				"CREATE TABLE IF NOT EXISTS br_ban_meta ( bid SERIAL PRIMARY KEY NOT NULL,"
-						+ " creation_time TIMESTAMP NOT NULL DEFAULT NOW(), end_time TIMESTAMP, comment TEXT,"
-						+ " source TEXT);",
+				"CREATE VIEW extended_shares AS SELECT brsh.shid, brsh.forgiven, brsh.first_sid, brse1.player as player1, brse1.join_time as join_time1, "
+						+ "brse1.leave_time as leave_time1, brse1.ip as ip1, brse1.forgiven as forgiven1, brsh.second_sid, brse2.player as player2, "
+						+ "brse2.join_time as join_time2, brse2.leave_time as leave_time2, "
+						+ "brse2.ip as ip2, brse2.forgiven as forgiven2 FROM br_shares brsh INNER JOIN br_sessions brse1 ON brsh.first_sid = brse1.sid "
+						+ "INNER JOIN br_sessions brse2 ON brsh.second_sid = brse2.sid ",
 
-				"CREATE TABLE IF NOT EXISTS br_ban_ip ( bid SERIAL PRIMARY KEY NOT NULL," + " ip cidr not null,"
+				"CREATE TYPE IF NOT EXISTS br_ban_effect AS ENUM ('NOTHING', 'DENY_LOGIN', "
+						+ "'BAN_ACCOUNT', 'BAN_CLUSTER', 'CUSTOM_1', 'CUSTOM_2', 'CUSTOM_3', 'CUSTOM_4', 'CUSTOM_5')",
+
+				"CREATE TABLE IF NOT EXISTS br_ban_meta ( bid SERIAL PRIMARY KEY NOT NULL,"
+						+ " creation_time TIMESTAMP NOT NULL DEFAULT NOW(), end_time TIMESTAMP, effect br_ban_effect not null, "
+						+ "comment TEXT, source TEXT);",
+
+				"CREATE TABLE IF NOT EXISTS br_ban_ip ( bid SERIAL PRIMARY KEY NOT NULL," + " ip CIDR NOT NULL,"
 						+ "constraint br_ban_ip_fk_bid foreign key (bid) references br_ban_meta (bid) ON DELETE CASCADE);",
 
 				"CREATE TABLE IF NOT EXISTS br_ban_player ( bid SERIAL PRIMARY KEY NOT NULL," + " player uuid not null,"
+						+ "constraint br_ban_player_fk_bid foreign key (bid) references br_ban_meta (bid) ON DELETE CASCADE);",
+						
+				"CREATE TABLE IF NOT EXISTS br_ban_cluster ( bid SERIAL PRIMARY KEY NOT NULL, player uuid not null,"
 						+ "constraint br_ban_player_fk_bid foreign key (bid) references br_ban_meta (bid) ON DELETE CASCADE);",
 
 				// thomasih table
@@ -88,30 +104,156 @@ public class BanRodDAO extends ZeusPluginDatabase {
 						+ " lat_offset DOUBLE PRECISION not null, lon_offset DOUBLE PRECISION not null,"
 						+ "constraint br_ban_geoloc_fk_bid foreign key (bid) references br_ban_meta (bid) ON DELETE CASCADE);",
 
-				"CREATE TYPE br_extra_ban_type AS ENUM ('country', 'region', "
-						+ "'city', 'postal', 'domain', 'registered_as', 'connection')",
+				"CREATE TYPE IF NOT EXISTS br_extra_ban_type AS ENUM ('COUNTRY', 'REGION', "
+						+ "'CITY', 'POSTAL', 'DOMAIN', 'REGISTERED_AS', 'CONNECTION')",
 
 				"CREATE TABLE IF NOT EXISTS br_extra_bans ( bid SERIAL PRIMARY KEY NOT NULL,"
-						+ " type br_extra_ban_type NOT NULL content text NOT NULL,"
+						+ " type br_extra_ban_type NOT NULL, content text NOT NULL,"
 						+ "constraint br_extra_bans_fk_bid foreign key (bid) references br_ban_meta (bid) ON DELETE CASCADE);",
 
 				"CREATE INDEX br_extra_bans_lookup on br_extra_bans (type, content)",
 
 				"CREATE TABLE IF NOT EXISTS br_share_exclusions (seid SERIAL PRIMARY KEY NOT NULL,"
-						+ " uuid first_player NOT NULL, uuid second_player NOT NULL)",
+						+ " first_player UUID NOT NULL, second_player UUID NOT NULL)",
 
 				"CREATE INDEX br_share_excl_first on br_share_exclusions (first_player)",
 				"CREATE INDEX br_share_excl_second on br_share_exclusions (second_player)",
 
 				"CREATE TABLE IF NOT EXISTS br_ban_exclusions (bid SERIAL NOT NULL,"
-						+ " player UUID NOT NULL, PRIMARY KEY(bid, player)"
-						+ "constraint br_ban_exclusions_fk_bid foreign key (bid) references br_ban_meta (bid) ON DELETE CASCADE);");
+						+ " player UUID NOT NULL, PRIMARY KEY(bid, player),"
+						+ "constraint br_ban_exclusions_fk_bid foreign key (bid) references br_ban_meta (bid) ON DELETE CASCADE)");
+	}
+
+	public BRMetaBan insertMetaBan(int bid, Instant startingTime, Instant endTime, String comment, String source,
+			BanEffect effect, BRMetaBanType banType, String condition) {
+		int id = createBanMetaEntry(startingTime, endTime, comment, source, effect);
+		if (id == -1) {
+			return null;
+		}
+		try (Connection connection = db.getConnection();
+				PreparedStatement putIPBan = connection
+						.prepareStatement("insert into br_extra_bans (bid, type, content) values(?,?,?)")) {
+			putIPBan.setInt(1, id);
+			putIPBan.setString(2, banType.toString());
+			putIPBan.setString(3, condition);
+			putIPBan.execute();
+			return new BRMetaBan(bid, startingTime, endTime, comment, source, banType, condition, effect);
+		} catch (SQLException e) {
+			logger.error("Problem creating meta ban ", e);
+			return null;
+		}
+	}
+
+	public Set<BRShare> getAllSharesFor(UUID uuid) {
+		try (Connection connection = db.getConnection();
+				PreparedStatement getShares = connection
+						.prepareStatement("WITH RECURSIVE alts AS (SELECT es.shid,es.forgiven,es.first_sid,es.player1,es.join_time1,"
+								+ "es.leave_time1,es.ip1,es.forgiven1,es.second_sid,es.player2,es.join_time2,es.leave_time2,es.ip2,"
+								+ "es.forgiven2 FROM extended_shares es "
+								+ "WHERE es.player1 = ? OR es.player2 = ? UNION SELECT es_in.shid,es_in.forgiven,es_in.first_sid,es_in.player1,"
+								+ "es_in.join_time1,es_in.leave_time1,es_in.ip1,es_in.forgiven1,es_in.second_sid,es_in.player2,es_in.join_time2,"
+								+ "es_in.leave_time2,es_in.ip2,es_in.forgiven2 FROM extended_shares es_in "
+								+ "INNER JOIN alts a ON a.player1 = es_in.player1 OR a.player2 = es_in.player2 "
+								+ "OR a.player1 = es_in.player2 OR a.player2 = es_in.player1) SELECT * FROM alts")) {
+			getShares.setObject(1, uuid);
+			getShares.setObject(2, uuid);
+			try (ResultSet rs = getShares.executeQuery()) {
+				Set<BRShare> result = new HashSet<>();
+				while (rs.next()) {
+					int shareID = rs.getInt(1);
+					boolean forgiven = rs.getBoolean(2);
+					BRSession firstSession = parseSession(rs, 3);
+					BRSession secondSession = parseSession(rs, 9);
+					BRShare share = new BRShare(shareID, firstSession, secondSession, forgiven);
+					result.add(share);
+				}
+				return result;
+			}
+		} catch (SQLException e) {
+			logger.error("Problem selecting alts", e);
+			return Collections.emptySet();
+		}
+	}
+
+	private BRSession parseSession(ResultSet rs, int offset) throws SQLException {
+		int id = rs.getInt(offset);
+		UUID player = (UUID) rs.getObject(offset + 1);
+		Instant start = rs.getTimestamp(offset + 2).toInstant();
+		Timestamp endTimeStamp = rs.getTimestamp(offset + 3);
+		Instant end = endTimeStamp != null ? endTimeStamp.toInstant() : null;
+		IPAddress ip = new IPAddressString(rs.getString(offset + 4)).getAddress();
+		boolean forgiven = rs.getBoolean(offset + 5);
+		return new BRSession(id, player, start, end, ip, forgiven);
+	}
+
+	public BRIPBan<? extends IPAddress> insertIPBan(Instant startingTime, Instant endTime, String comment,
+			String source, BanEffect effect, IPAddress ip) {
+		int id = createBanMetaEntry(startingTime, endTime, comment, source, effect);
+		if (id == -1) {
+			return null;
+		}
+		try (Connection connection = db.getConnection();
+				PreparedStatement putIPBan = connection
+						.prepareStatement("insert into br_ban_ip (bid, ip) values(?,?::INET)")) {
+			putIPBan.setInt(1, id);
+			putIPBan.setString(2, ip.toNetworkPrefixLengthString());
+			putIPBan.execute();
+			if (ip instanceof IPv4Address) {
+				return new BRIPv4Ban(id, startingTime, endTime, comment, source, effect, (IPv4Address) ip);
+			} else {
+				return new BRIPv6Ban(id, startingTime, endTime, comment, source, effect, (IPv6Address) ip);
+			}
+		} catch (SQLException e) {
+			logger.error("Problem creating ip ban ", e);
+			return null;
+		}
+	}
+
+	public BRPlayerBan insertPlayerBan(UUID player, Instant startingTime, Instant endTime, String comment,
+			String source, BanEffect effect) {
+		int id = createBanMetaEntry(startingTime, endTime, comment, source, effect);
+		if (id == -1) {
+			return null;
+		}
+		try (Connection connection = db.getConnection();
+				PreparedStatement putPlayerBan = connection
+						.prepareStatement("insert into br_ban_player (bid, player) values(?,?)")) {
+			putPlayerBan.setInt(1, id);
+			putPlayerBan.setObject(2, player);
+			putPlayerBan.execute();
+			return new BRPlayerBan(id, startingTime, endTime, comment, source, player, effect);
+		} catch (SQLException e) {
+			logger.error("Problem creating player ban ", e);
+			return null;
+		}
+	}
+
+	private int createBanMetaEntry(Instant startingTime, Instant endTime, String comment, String source,
+			BanEffect effect) {
+		try (Connection connection = db.getConnection();
+				PreparedStatement putBanMeta = connection.prepareStatement(
+						"insert into br_ban_meta (creation_time, end_time, effect, comment, source) values (?,?,?,?,?);",
+						Statement.RETURN_GENERATED_KEYS)) {
+			putBanMeta.setTimestamp(1, Timestamp.from(startingTime));
+			putBanMeta.setTimestamp(2, endTime != null ? Timestamp.from(endTime) : null);
+			putBanMeta.setString(3, effect.toString());
+			putBanMeta.setString(4, comment);
+			putBanMeta.setString(5, source);
+			putBanMeta.executeUpdate();
+			try (ResultSet rs = putBanMeta.getGeneratedKeys()) {
+				rs.next();
+				return rs.getInt(1);
+			}
+		} catch (SQLException e) {
+			logger.error("Problem creating player ban meta", e);
+			return -1;
+		}
 	}
 
 	public List<BRPlayerBan> getPlayerBans(UUID player) {
 		try (Connection connection = db.getConnection();
-				PreparedStatement getBans = connection
-						.prepareStatement("select bbm.bid, bbm.creation_time, bbm.end_time, bbm.comment, bbm.source, "
+				PreparedStatement getBans = connection.prepareStatement(
+						"select bbm.bid, bbm.creation_time, bbm.end_time, bbm.comment, bbm.source, bbm.effect "
 								+ "from br_ban_player bbp inner join br_ban_meta bbm on bbp.bid = bbm.bid "
 								+ "where bbp.player = ?")) {
 			getBans.setObject(1, player);
@@ -125,7 +267,8 @@ public class BanRodDAO extends ZeusPluginDatabase {
 					Instant endTime = endTimeStamp != null ? endTimeStamp.toInstant() : null;
 					String comment = rs.getString(4);
 					String source = rs.getString(5);
-					result.add(new BRPlayerBan(bid, creationTime, endTime, comment, source, player));
+					BanEffect effect = BanEffect.valueOf(rs.getString(6));
+					result.add(new BRPlayerBan(bid, creationTime, endTime, comment, source, player, effect));
 				}
 			}
 			return result;
@@ -137,9 +280,9 @@ public class BanRodDAO extends ZeusPluginDatabase {
 
 	public List<BRIPBan<?>> getIPBans(IPAddress ip) {
 		try (Connection connection = db.getConnection();
-				PreparedStatement getBans = connection
-						.prepareStatement("SELECT bbm.bid, bbm.creation_time, bbm.end_time, bbm.comment, bbm.source, "
-								+ "FROM br_ban_ip bbi JOIN br_ban_meta bbm using (bid) " + "where ? <<= bbi.ip")) {
+				PreparedStatement getBans = connection.prepareStatement(
+						"SELECT bbm.bid, bbm.creation_time, bbm.end_time, bbm.comment, bbm.source, bbm.effect "
+								+ "FROM br_ban_ip bbi JOIN br_ban_meta bbm using (bid) where ?::INET <<= bbi.ip")) {
 			List<BRIPBan<?>> result = new ArrayList<>();
 			getBans.setString(1, ip.toNetworkPrefixLengthString());
 			try (ResultSet rs = getBans.executeQuery()) {
@@ -161,17 +304,18 @@ public class BanRodDAO extends ZeusPluginDatabase {
 		Instant endTime = endTimeStamp != null ? endTimeStamp.toInstant() : null;
 		String comment = rs.getString(4);
 		String source = rs.getString(5);
+		BanEffect effect = BanEffect.valueOf(rs.getString(6));
 		if (ip instanceof IPv4Address) {
-			return new BRIPv4Ban(bid, creationTime, endTime, comment, source, (IPv4Address) ip);
+			return new BRIPv4Ban(bid, creationTime, endTime, comment, source, effect, (IPv4Address) ip);
 		} else {
-			return new BRIPv6Ban(bid, creationTime, endTime, comment, source, (IPv6Address) ip);
+			return new BRIPv6Ban(bid, creationTime, endTime, comment, source, effect, (IPv6Address) ip);
 		}
 	}
 
 	public List<BRMetaBan> getMetaBans(String content, BRMetaBanType type) {
 		try (Connection connection = db.getConnection();
-				PreparedStatement getBans = connection
-						.prepareStatement("select bbm.bid, bbm.creation_time, bbm.end_time, bbm.comment, bbm.source, "
+				PreparedStatement getBans = connection.prepareStatement(
+						"select bbm.bid, bbm.creation_time, bbm.end_time, bbm.comment, bbm.source, bbm.effect "
 								+ "from br_extra_bans beb inner join br_ban_meta bbm on beb.bid = bbm.bid "
 								+ "where beb.type = ?::br_extra_ban_type and beb.content = ?")) {
 			getBans.setString(1, type.getDBIdentifier());
@@ -186,7 +330,8 @@ public class BanRodDAO extends ZeusPluginDatabase {
 					Instant endTime = endTimeStamp != null ? endTimeStamp.toInstant() : null;
 					String comment = rs.getString(4);
 					String source = rs.getString(5);
-					result.add(new BRMetaBan(bid, creationTime, endTime, comment, source, type, content));
+					BanEffect effect = BanEffect.valueOf(rs.getString(6));
+					result.add(new BRMetaBan(bid, creationTime, endTime, comment, source, type, content, effect));
 				}
 			}
 			return result;
@@ -195,14 +340,26 @@ public class BanRodDAO extends ZeusPluginDatabase {
 			return Collections.emptyList();
 		}
 	}
+	
+	public void finishOpenSession(int sessionID, Instant endingTime) {
+		try (Connection connection = db.getConnection();
+				PreparedStatement endSession = connection.prepareStatement(
+						"update br_sessions set leave_time = ? where sid = ?")) {
+			endSession.setTimestamp(1, Timestamp.from(endingTime));
+			endSession.setInt(2, sessionID);
+			endSession.execute();
+		} catch (SQLException e) {
+			logger.error("Problem closing open session", e);
+		}
+	}
 
-	public void insertSession(UUID player, Instant startingTime, Instant endTime, IPAddress ip, boolean createShare) {
+	public int insertSession(UUID player, Instant startingTime, Instant endTime, IPAddress ip, boolean createShare) {
 		// load preexisting sessions to update shares
 		Map<UUID, Integer> playersInThisShare = new HashMap<>();
 		if (createShare) {
 			try (Connection connection = db.getConnection();
 					PreparedStatement insSession = connection.prepareStatement(
-							"SELECT sid, player FROM br_sessions WHERE ip = ? AND forgiven = FALSE ORDER BY creation_time ASC")) {
+							"SELECT sid, player FROM br_sessions WHERE ip = ?::INET AND forgiven = FALSE ORDER BY join_time ASC")) {
 				insSession.setString(1, ip.toCanonicalString());
 				try (ResultSet rs = insSession.executeQuery()) {
 					while (rs.next()) {
@@ -215,18 +372,18 @@ public class BanRodDAO extends ZeusPluginDatabase {
 				}
 			} catch (SQLException e) {
 				logger.error("Problem getting existing sessions ", e);
-				return;
+				return -1;
 			}
 		}
 		int sessionID = insertSessionEntry(player, startingTime, endTime, ip, !createShare);
 		if (sessionID == -1 || !createShare) {
-			return;
+			return sessionID;
 		}
 		if (playersInThisShare.isEmpty()) {
-			return; // new player on new ip
+			return sessionID; // new player on new ip
 		}
 		if (playersInThisShare.containsKey(player)) {
-			return; // player already has shares with all players on this ip as he played on this IP
+			return sessionID; // player already has shares with all players on this ip as he played on this IP
 					// before
 		}
 		// create shares between all players who played on this IP and the player
@@ -240,19 +397,25 @@ public class BanRodDAO extends ZeusPluginDatabase {
 			}
 			insertShare(sessionID, shareEntry.getValue());
 		}
+		return sessionID;
 	}
 
 	private int insertSessionEntry(UUID player, Instant startingTime, Instant endTime, IPAddress ip, boolean forgiven) {
 		try (Connection connection = db.getConnection();
 				PreparedStatement insSession = connection.prepareStatement(
-						"INSERT INTO br_sessions(player, join_time, leave_time, ip, forgiven) values(?,?,?,?,?)",
+						"INSERT INTO br_sessions(player, join_time, leave_time, ip, forgiven) values(?,?,?,?::INET,?)",
 						Statement.RETURN_GENERATED_KEYS)) {
 			insSession.setObject(1, player);
 			insSession.setTimestamp(2, Timestamp.from(startingTime));
-			insSession.setTimestamp(3, Timestamp.from(endTime));
+			if (endTime == null) {
+				insSession.setTimestamp(3, null);
+			} else {
+				insSession.setTimestamp(3, Timestamp.from(endTime));
+			}
 			insSession.setString(4, ip.toCanonicalString());
 			insSession.setBoolean(5, forgiven);
-			try (ResultSet rs = insSession.executeQuery()) {
+			insSession.executeUpdate();
+			try (ResultSet rs = insSession.getGeneratedKeys()) {
 				rs.next();
 				return rs.getInt(1);
 			}

@@ -43,5 +43,9 @@ public class BRMetaBan extends BRBan {
 			throw new IllegalStateException();
 		}
 	}
+	
+	public String toString() {
+		return String.format("Meta Ban on condition %s for %s, %s", condition, banType, super.toString());
+	}
 
 }

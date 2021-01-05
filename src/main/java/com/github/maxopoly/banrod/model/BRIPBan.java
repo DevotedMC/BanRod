@@ -21,6 +21,10 @@ public class BRIPBan <I extends IPAddress> extends BRBan {
 	public String getBanText() {
 		return "IP Ban  -  " + getFormattedTimeSpan();
 	}
+	
+	public String toString() {
+		return String.format("IP Ban %s, %s", ip, super.toString());
+	}
 
 }
 

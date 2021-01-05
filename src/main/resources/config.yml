@@ -1,0 +1,2 @@
+create_share_on_failed_login: false
+max_accounts_per_share: 1

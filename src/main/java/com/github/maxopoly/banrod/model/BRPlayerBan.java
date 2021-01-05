@@ -20,4 +20,9 @@ public class BRPlayerBan extends BRBan {
 	public String getBanText() {
 		return "Account Ban  -  " + getFormattedTimeSpan();
 	}
+	
+	@Override
+	public String toString() {
+		return String.format("Player ban for %s, %s", player, super.toString());
+	}
 }
