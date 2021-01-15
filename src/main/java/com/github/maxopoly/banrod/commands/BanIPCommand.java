@@ -2,20 +2,15 @@ package com.github.maxopoly.banrod.commands;
 
 import com.github.maxopoly.banrod.BanRodPlugin;
 import com.github.maxopoly.banrod.model.BanEffect;
-import com.github.maxopoly.zeus.ZeusMain;
 import com.github.maxopoly.zeus.commands.ZCommand;
 import com.github.maxopoly.zeus.commands.ZeusCommand;
 import com.github.maxopoly.zeus.commands.sender.CommandSender;
 import com.github.maxopoly.zeus.util.ParsingUtils;
 import inet.ipaddr.IPAddress;
-import inet.ipaddr.format.IPAddressDivision;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Instant;
-import java.util.UUID;
 
-
-//IPAddress, now, future, source, comment, baneffect
 @ZCommand(description = "Bans a player IP", altIds = "bip", id = "banIP", minArgs = 1, maxArgs = 3)
 public class BanIPCommand extends ZeusCommand {
     @Override
